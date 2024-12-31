@@ -3,9 +3,6 @@
 # Enable proper error handling
 set -e
 
-# Only enable debug mode if requested
-[[ "$DEBUG" == "true" ]] && set -x
-
 # Default modes
 DRY_RUN=false
 VERBOSE=false
@@ -21,6 +18,7 @@ init_logs() {
     mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$ERROR_LOG_FILE")"
     : > "$LOG_FILE"
     : > "$ERROR_LOG_FILE"
+    echo "Log files initialized"
 }
 
 # Help message
@@ -45,8 +43,12 @@ EOF
 
 # Logging functions
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
-    [[ "$VERBOSE" == "true" ]] && echo "Details: $2" | tee -a "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+    if [[ "$VERBOSE" == "true" && -n "$2" ]]; then
+        echo "Details: $2"
+        echo "Details: $2" >> "$LOG_FILE"
+    fi
 }
 
 log_error() {
@@ -55,20 +57,25 @@ log_error() {
 
 # Parse command line arguments
 parse_args() {
+    echo "Parsing arguments..."
     while [[ $# -gt 0 ]]; do
         key="$1"
         case "$key" in
             --dry-run)
                 DRY_RUN=true
+                echo "Dry run mode enabled"
                 ;;
             --verbose)
                 VERBOSE=true
+                echo "Verbose mode enabled"
                 ;;
             --cleanup)
                 CLEANUP=true
+                echo "Cleanup mode enabled"
                 ;;
             --debug)
                 set -x
+                echo "Debug mode enabled"
                 ;;
             --select)
                 if [[ -z "$2" ]]; then
@@ -76,6 +83,7 @@ parse_args() {
                     exit 1
                 fi
                 SELECTED_TOOLS+=("$2")
+                echo "Added $2 to selected tools"
                 shift
                 ;;
             --help)
@@ -94,41 +102,16 @@ parse_args() {
 
 # System check
 check_system() {
+    echo "Checking system..."
     if [[ "$(uname)" != "Darwin" ]]; then
         log_error "This script is designed for macOS only. Exiting."
         exit 1
     fi
-}
-
-# Homebrew setup
-setup_homebrew() {
-    if ! command -v brew &>/dev/null; then
-        log "Homebrew not found. Would install Homebrew..."
-        if [[ "$DRY_RUN" == "false" ]]; then
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
-                log_error "Failed to install Homebrew. Exiting."
-                exit 1
-            }
-            
-            if [[ "$(uname -m)" == "arm64" ]]; then
-                echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-                eval "$(/opt/homebrew/bin/brew shellenv)"
-            fi
-            
-            log "Homebrew installed successfully."
-        fi
-    else
-        log "Homebrew already installed. Would update..."
-        if [[ "$DRY_RUN" == "false" ]]; then
-            brew update || log_error "Failed to update Homebrew."
-            brew upgrade || log_error "Failed to upgrade Homebrew packages."
-            log "Homebrew is up to date."
-        fi
-    fi
+    echo "System check passed"
 }
 
 # Tool definitions
-typeset -A cask_tools=(
+declare -A cask_tools=(
     [warp]="warp"
     [raycast]="raycast"
     [notion]="notion"
@@ -145,7 +128,7 @@ typeset -A cask_tools=(
     [docker]="docker"
 )
 
-typeset -A brew_tools=(
+declare -A brew_tools=(
     [miniconda]="miniconda"
     [git]="git"
     [node]="node"
@@ -170,112 +153,128 @@ install_tool() {
     local is_cask="$2"
     
     if [[ "$DRY_RUN" == "true" ]]; then
-        if [[ "$is_cask" == "true" ]]; then
-            log "[DRY RUN] Would install cask: $tool"
-        else
-            log "[DRY RUN] Would install formula: $tool"
-        fi
+        echo "[DRY RUN] Would install ${is_cask:+cask: }$tool"
         return 0
     fi
     
+    echo "Verifying $tool..."
     if ! verify_tool "$tool" "$is_cask"; then
         log_error "Package $tool not found in Homebrew. Skipping."
         return 1
     fi
     
-    log "Installing $tool..."
-    local output
+    echo "Installing $tool..."
     if [[ "$is_cask" == "true" ]]; then
-        if output=$(brew install --cask "$tool" 2>&1); then
-            log "$tool installed successfully." "$output"
-        else
-            log_error "$tool installation failed. Skipping to next item."
-            [[ "$VERBOSE" == "true" ]] && echo "$output" >> "$ERROR_LOG_FILE"
-        fi
+        brew install --cask "$tool" || {
+            log_error "$tool installation failed"
+            return 1
+        }
     else
-        if output=$(brew install "$tool" 2>&1); then
-            log "$tool installed successfully." "$output"
-        else
-            log_error "$tool installation failed. Skipping to next item."
-            [[ "$VERBOSE" == "true" ]] && echo "$output" >> "$ERROR_LOG_FILE"
-        fi
+        brew install "$tool" || {
+            log_error "$tool installation failed"
+            return 1
+        }
     fi
+    echo "$tool installed successfully"
 }
 
 install_selected_tools() {
     local tool_type="$3"
-    log "Installing $tool_type..."
+    echo "Starting installation of $tool_type..."
     
+    # Reference to the associative array
     local -n tools="$1"
     local is_cask="$2"
     
+    # Print selected tools if any
+    if (( ${#SELECTED_TOOLS[@]} > 0 )); then
+        echo "Selected tools: ${SELECTED_TOOLS[*]}"
+    else
+        echo "Installing all available tools"
+    fi
+    
+    # Iterate over the tools
     for key in "${(@k)tools}"; do
-        if [[ ${#SELECTED_TOOLS[@]} -eq 0 ]] || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
+        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
+            echo "Processing $key..."
             install_tool "${tools[$key]}" "$is_cask"
         fi
     done
+    
+    echo "Completed installation of $tool_type"
+}
+
+# Homebrew setup
+setup_homebrew() {
+    echo "Setting up Homebrew..."
+    if ! command -v brew &>/dev/null; then
+        echo "Homebrew not found. Installing..."
+        if [[ "$DRY_RUN" == "false" ]]; then
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
+                log_error "Failed to install Homebrew"
+                exit 1
+            }
+            
+            if [[ "$(uname -m)" == "arm64" ]]; then
+                echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+                eval "$(/opt/homebrew/bin/brew shellenv)"
+            fi
+        fi
+        echo "Homebrew installation completed"
+    else
+        echo "Homebrew found. Updating..."
+        if [[ "$DRY_RUN" == "false" ]]; then
+            brew update || log_error "Failed to update Homebrew"
+            brew upgrade || log_error "Failed to upgrade Homebrew packages"
+        fi
+        echo "Homebrew update completed"
+    fi
 }
 
 # Conda setup
 setup_conda() {
+    echo "Checking conda..."
     if command -v conda &>/dev/null; then
-        log "Initializing conda..."
+        echo "Initializing conda..."
         if [[ "$DRY_RUN" == "false" ]]; then
             conda init "$(basename "$SHELL")" || log_error "Failed to initialize conda"
         else
-            log "[DRY RUN] Would initialize conda"
+            echo "[DRY RUN] Would initialize conda"
         fi
     fi
 }
 
 # Cleanup
 cleanup() {
-    if [[ "$CLEANUP" == "true" ]] && [[ "$DRY_RUN" == "false" ]]; then
-        log "Cleaning up..."
-        brew cleanup || log_error "Failed to clean up Homebrew cache"
+    if [[ "$CLEANUP" == "true" ]]; then
+        echo "Running cleanup..."
+        if [[ "$DRY_RUN" == "false" ]]; then
+            brew cleanup || log_error "Failed to clean up Homebrew cache"
+        else
+            echo "[DRY RUN] Would clean up Homebrew cache"
+        fi
     fi
-}
-
-# Completion message
-show_completion_message() {
-    cat << EOF
-
-🎉 Installation completed! Here are some additional steps you might want to take:
-
-1. Set up SSH keys for GitHub:
-   ssh-keygen -t ed25519 -C "your_email@example.com"
-
-2. Configure Git:
-   git config --global user.name "Your Name"
-   git config --global user.email "your_email@example.com"
-
-3. Install Oh My Zsh (if you want):
-   sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-
-4. Configure your terminal preferences in iTerm2/Warp
-
-5. Set up Rectangle window management preferences
-
-For more details, check the documentation of each tool installed.
-EOF
 }
 
 # Main execution
 main() {
+    echo "Starting installation process..."
+    
     parse_args "$@"
     init_logs
     check_system
     setup_homebrew
     
+    echo "Installing tools..."
     install_selected_tools cask_tools true "cask applications"
     install_selected_tools brew_tools false "brew formulae"
     
     setup_conda
     cleanup
     
-    log "Installation process completed."
-    echo "Check $ERROR_LOG_FILE for errors, if any."
-    show_completion_message
+    echo "Installation process completed"
+    echo "Check $ERROR_LOG_FILE for any errors"
 }
 
+# Execute main
 main "$@"
