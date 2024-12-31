@@ -125,7 +125,7 @@ verify_tool() {
   local is_cask=$2
   
   if [ "$is_cask" = true ]; then
-    brew cask info "$tool" &>/dev/null
+    brew info --cask "$tool" &>/dev/null
   else
     brew info "$tool" &>/dev/null
   fi
