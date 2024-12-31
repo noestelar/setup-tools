@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 
 # Script to install tools and languages using Homebrew
 # Handles failures gracefully and logs errors.
