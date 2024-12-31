@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-
+set -x
 # Script to install tools and languages using Homebrew
 # Handles failures gracefully and logs errors.
 
