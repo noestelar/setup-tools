@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-set -x  # ← Uncomment this line if you want to see each command as it runs (debug mode).
+# set -x  # ← Uncomment for debugging (prints each command as it runs)
 
 ###############################################################################
 # Script to install tools and languages using Homebrew (Zsh version).
@@ -68,11 +68,13 @@ done
 typeset LOG_FILE="install.log"
 typeset ERROR_LOG_FILE="error.log"
 
-# Initialize log files
-> "$LOG_FILE"
-> "$ERROR_LOG_FILE"
+# Initialize log files by simply redirecting an empty string
+> "$LOG_FILE"         # Correct way to clear the file
+> "$ERROR_LOG_FILE"   # Correct way to clear the file
 
+###############################################################################
 # Logging functions
+###############################################################################
 function log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
   if [[ "$VERBOSE" == true ]]; then
@@ -111,9 +113,7 @@ if ! command -v brew &>/dev/null; then
   fi
 else
   log "Homebrew already installed."
-  # The following lines often cause freezing if there's a license or network issue.
-  # Uncomment them if you want the script to update/upgrade Homebrew automatically:
-  #
+  # Uncomment if you want auto-update/upgrade (can sometimes hang):
   # if [[ "$DRY_RUN" == false ]]; then
   #   brew update || log_error "Failed to update Homebrew."
   #   brew upgrade || log_error "Failed to upgrade Homebrew packages."
@@ -122,15 +122,16 @@ else
 fi
 
 ###############################################################################
-# Define the tools to install (with chatgpt and cursor included)
+# Define the tools to install
+# (Include or exclude 'cursor', 'chatgpt' per your environment)
 ###############################################################################
 typeset -A cask_tools=(
   ["chrome"]="google-chrome"
   ["warp"]="warp"
   ["raycast"]="raycast"
   ["notion"]="notion"
-  ["cursor"]="cursor"           # ← included
-  ["chatgpt"]="chatgpt"         # ← included
+  ["cursor"]="cursor"
+  ["chatgpt"]="chatgpt"
   ["slack"]="slack"
   ["discord"]="discord"
   ["1password"]="1password"
@@ -163,7 +164,7 @@ function install_tool() {
     else
       log "[DRY RUN] Would install formula: $tool"
     fi
-    return
+    return 0
   fi
 
   log "Installing $tool..."
@@ -217,7 +218,7 @@ if command -v conda &>/dev/null; then
   if [[ "$DRY_RUN" == false ]]; then
     conda init "$(basename "$SHELL")" || log_error "Failed to initialize conda"
   else
-    log "[DRY RUN] Would initialize conda"
+    log "[DRY_RUN] Would initialize conda"
   fi
 fi
 
