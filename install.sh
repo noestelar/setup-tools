@@ -1,5 +1,6 @@
 #!/usr/bin/env zsh
-set -x
+set -x  # Enable debugging
+
 # Script to install tools and languages using Homebrew
 # Handles failures gracefully and logs errors.
 
@@ -95,7 +96,6 @@ fi
 
 # Tools to install (separated by installation method)
 typeset -A cask_tools=(
-  # ["chrome"]="google-chrome"
   ["warp"]="warp"
   ["raycast"]="raycast"
   ["notion"]="notion"
@@ -125,7 +125,7 @@ verify_tool() {
   local is_cask=$2
   
   if [ "$is_cask" = true ]; then
-    brew cask info "$tool" &>/dev/null
+    brew info --cask "$tool" &>/dev/null
   else
     brew info "$tool" &>/dev/null
   fi
