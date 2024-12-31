@@ -1,26 +1,27 @@
 #!/usr/bin/env zsh
 
-# Script to install tools and languages using Homebrew
-# Handles failures gracefully and logs errors.
-
-# Enable proper array handling in zsh
-setopt KSH_ARRAYS
-setopt SH_WORD_SPLIT
+# Enable proper error handling
+set -e
 
 # Only enable debug mode if requested
-if [[ "$DEBUG" == "true" ]]; then
-    set -x
-fi
+[[ "$DEBUG" == "true" ]] && set -x
 
 # Default modes
 DRY_RUN=false
 VERBOSE=false
 CLEANUP=false
-declare -a SELECTED_TOOLS
+typeset -a SELECTED_TOOLS
 
 # Log files
 LOG_FILE="install.log"
 ERROR_LOG_FILE="error.log"
+
+# Initialize log files
+init_logs() {
+    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$ERROR_LOG_FILE")"
+    : > "$LOG_FILE"
+    : > "$ERROR_LOG_FILE"
+}
 
 # Help message
 show_help() {
@@ -42,66 +43,56 @@ Example:
 EOF
 }
 
-# Functions
+# Logging functions
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
-    if [[ "$VERBOSE" == "true" ]]; then
-        echo "Details: $2" | tee -a "$LOG_FILE"
-    fi
+    [[ "$VERBOSE" == "true" ]] && echo "Details: $2" | tee -a "$LOG_FILE"
 }
 
 log_error() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR: $1" | tee -a "$ERROR_LOG_FILE"
 }
 
-# Initialize log files
-init_logs() {
-    # Create logs directory if it doesn't exist
-    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$ERROR_LOG_FILE")"
-    > "$LOG_FILE"
-    > "$ERROR_LOG_FILE"
-}
-
 # Parse command line arguments
 parse_args() {
-    while (( $# > 0 )); do
-        case "$1" in
-            --dry-run) 
-                DRY_RUN=true 
+    while [[ $# -gt 0 ]]; do
+        key="$1"
+        case "$key" in
+            --dry-run)
+                DRY_RUN=true
                 ;;
-            --verbose) 
-                VERBOSE=true 
+            --verbose)
+                VERBOSE=true
                 ;;
-            --cleanup) 
-                CLEANUP=true 
+            --cleanup)
+                CLEANUP=true
                 ;;
-            --debug) 
-                DEBUG=true
-                set -x 
+            --debug)
+                set -x
                 ;;
-            --select) 
+            --select)
                 if [[ -z "$2" ]]; then
                     echo "Error: --select requires a tool name"
                     exit 1
                 fi
                 SELECTED_TOOLS+=("$2")
-                shift 
+                shift
                 ;;
-            --help) 
+            --help)
                 show_help
-                exit 0 
+                exit 0
                 ;;
-            *) 
+            *)
                 echo "Unknown parameter: $1"
                 show_help
-                exit 1 
+                exit 1
                 ;;
         esac
         shift
     done
 }
 
-# Check system requirements
+# System check
 check_system() {
     if [[ "$(uname)" != "Darwin" ]]; then
         log_error "This script is designed for macOS only. Exiting."
@@ -109,7 +100,7 @@ check_system() {
     fi
 }
 
-# Install or update Homebrew
+# Homebrew setup
 setup_homebrew() {
     if ! command -v brew &>/dev/null; then
         log "Homebrew not found. Would install Homebrew..."
@@ -119,7 +110,6 @@ setup_homebrew() {
                 exit 1
             }
             
-            # Add Homebrew to PATH for Apple Silicon Macs
             if [[ "$(uname -m)" == "arm64" ]]; then
                 echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
                 eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -137,9 +127,8 @@ setup_homebrew() {
     fi
 }
 
-# Tools to install (separated by installation method)
-declare -A cask_tools
-cask_tools=(
+# Tool definitions
+typeset -A cask_tools=(
     [warp]="warp"
     [raycast]="raycast"
     [notion]="notion"
@@ -156,8 +145,7 @@ cask_tools=(
     [docker]="docker"
 )
 
-declare -A brew_tools
-brew_tools=(
+typeset -A brew_tools=(
     [miniconda]="miniconda"
     [git]="git"
     [node]="node"
@@ -165,21 +153,21 @@ brew_tools=(
     [gh]="gh"
 )
 
+# Tool verification and installation
 verify_tool() {
-    local tool=$1
-    local is_cask=$2
+    local tool="$1"
+    local is_cask="$2"
     
     if [[ "$is_cask" == "true" ]]; then
         brew info --cask "$tool" &>/dev/null
     else
         brew info "$tool" &>/dev/null
     fi
-    return $?
 }
 
 install_tool() {
-    local tool=$1
-    local is_cask=$2
+    local tool="$1"
+    local is_cask="$2"
     
     if [[ "$DRY_RUN" == "true" ]]; then
         if [[ "$is_cask" == "true" ]]; then
@@ -190,7 +178,6 @@ install_tool() {
         return 0
     fi
     
-    # Verify package exists
     if ! verify_tool "$tool" "$is_cask"; then
         log_error "Package $tool not found in Homebrew. Skipping."
         return 1
@@ -216,18 +203,20 @@ install_tool() {
 }
 
 install_selected_tools() {
-    local -n tools=$1
-    local is_cask=$2
-    local type=$3
+    local tool_type="$3"
+    log "Installing $tool_type..."
     
-    log "Installing $type..."
-    for key in ${(k)tools}; do
-        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[@]} " =~ " $key " ]]; then
+    local -n tools="$1"
+    local is_cask="$2"
+    
+    for key in "${(@k)tools}"; do
+        if [[ ${#SELECTED_TOOLS[@]} -eq 0 ]] || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
             install_tool "${tools[$key]}" "$is_cask"
         fi
     done
 }
 
+# Conda setup
 setup_conda() {
     if command -v conda &>/dev/null; then
         log "Initializing conda..."
@@ -239,6 +228,7 @@ setup_conda() {
     fi
 }
 
+# Cleanup
 cleanup() {
     if [[ "$CLEANUP" == "true" ]] && [[ "$DRY_RUN" == "false" ]]; then
         log "Cleaning up..."
@@ -246,6 +236,7 @@ cleanup() {
     fi
 }
 
+# Completion message
 show_completion_message() {
     cat << EOF
 
@@ -276,7 +267,6 @@ main() {
     check_system
     setup_homebrew
     
-    # Install tools
     install_selected_tools cask_tools true "cask applications"
     install_selected_tools brew_tools false "brew formulae"
     
@@ -288,5 +278,4 @@ main() {
     show_completion_message
 }
 
-# Execute main function with all arguments
 main "$@"
