@@ -95,7 +95,7 @@ fi
 
 # Tools to install (separated by installation method)
 declare -A cask_tools=(
-  ["chrome"]="google-chrome"
+  # ["chrome"]="google-chrome"
   ["warp"]="warp"
   ["raycast"]="raycast"
   ["notion"]="notion"
