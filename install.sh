@@ -182,8 +182,8 @@ install_selected_tools() {
     local tool_type="$3"
     echo "Starting installation of $tool_type..."
     
-    # Reference to the associative array
-    local -n tools="$1"
+    # Get the array name without -n reference
+    local array_name="$1"
     local is_cask="$2"
     
     # Print selected tools if any
@@ -193,13 +193,25 @@ install_selected_tools() {
         echo "Installing all available tools"
     fi
     
-    # Iterate over the tools
-    for key in "${(@k)tools}"; do
-        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
-            echo "Processing $key..."
-            install_tool "${tools[$key]}" "$is_cask"
-        fi
-    done
+    # Access the array using the name
+    case "$array_name" in
+        "cask_tools")
+            for key in "${(@k)cask_tools}"; do
+                if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
+                    echo "Processing $key..."
+                    install_tool "${cask_tools[$key]}" "$is_cask"
+                fi
+            done
+            ;;
+        "brew_tools")
+            for key in "${(@k)brew_tools}"; do
+                if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
+                    echo "Processing $key..."
+                    install_tool "${brew_tools[$key]}" "$is_cask"
+                fi
+            done
+            ;;
+    esac
     
     echo "Completed installation of $tool_type"
 }
