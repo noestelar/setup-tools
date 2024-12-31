@@ -3,6 +3,10 @@
 # Script to install tools and languages using Homebrew
 # Handles failures gracefully and logs errors.
 
+# Enable proper array handling in zsh
+setopt KSH_ARRAYS
+setopt SH_WORD_SPLIT
+
 # Only enable debug mode if requested
 if [[ "$DEBUG" == "true" ]]; then
     set -x
@@ -12,7 +16,7 @@ fi
 DRY_RUN=false
 VERBOSE=false
 CLEANUP=false
-SELECTED_TOOLS=()
+declare -a SELECTED_TOOLS
 
 # Log files
 LOG_FILE="install.log"
@@ -60,12 +64,21 @@ init_logs() {
 
 # Parse command line arguments
 parse_args() {
-    while [[ "$#" -gt 0 ]]; do
-        case $1 in
-            --dry-run) DRY_RUN=true ;;
-            --verbose) VERBOSE=true ;;
-            --cleanup) CLEANUP=true ;;
-            --debug) DEBUG=true; set -x ;;
+    while (( $# > 0 )); do
+        case "$1" in
+            --dry-run) 
+                DRY_RUN=true 
+                ;;
+            --verbose) 
+                VERBOSE=true 
+                ;;
+            --cleanup) 
+                CLEANUP=true 
+                ;;
+            --debug) 
+                DEBUG=true
+                set -x 
+                ;;
             --select) 
                 if [[ -z "$2" ]]; then
                     echo "Error: --select requires a tool name"
@@ -74,8 +87,15 @@ parse_args() {
                 SELECTED_TOOLS+=("$2")
                 shift 
                 ;;
-            --help) show_help; exit 0 ;;
-            *) echo "Unknown parameter: $1"; show_help; exit 1 ;;
+            --help) 
+                show_help
+                exit 0 
+                ;;
+            *) 
+                echo "Unknown parameter: $1"
+                show_help
+                exit 1 
+                ;;
         esac
         shift
     done
@@ -118,29 +138,31 @@ setup_homebrew() {
 }
 
 # Tools to install (separated by installation method)
-declare -A cask_tools=(
-    ["warp"]="warp"
-    ["raycast"]="raycast"
-    ["notion"]="notion"
-    ["cursor"]="cursor"
-    ["chatgpt"]="chatgpt"
-    ["slack"]="slack"
-    ["discord"]="discord"
-    ["1password"]="1password"
-    ["karabiner"]="karabiner-elements"
-    ["keyboardcleantool"]="keyboardcleantool"
-    ["gitkraken"]="gitkraken"
-    ["paw"]="paw"
-    ["vscode"]="visual-studio-code"
-    ["docker"]="docker"
+declare -A cask_tools
+cask_tools=(
+    [warp]="warp"
+    [raycast]="raycast"
+    [notion]="notion"
+    [cursor]="cursor"
+    [chatgpt]="chatgpt"
+    [slack]="slack"
+    [discord]="discord"
+    [1password]="1password"
+    [karabiner]="karabiner-elements"
+    [keyboardcleantool]="keyboardcleantool"
+    [gitkraken]="gitkraken"
+    [paw]="paw"
+    [vscode]="visual-studio-code"
+    [docker]="docker"
 )
 
-declare -A brew_tools=(
-    ["miniconda"]="miniconda"
-    ["git"]="git"
-    ["node"]="node"
-    ["python"]="python@3.11"
-    ["gh"]="gh"
+declare -A brew_tools
+brew_tools=(
+    [miniconda]="miniconda"
+    [git]="git"
+    [node]="node"
+    [python]="python@3.11"
+    [gh]="gh"
 )
 
 verify_tool() {
@@ -199,8 +221,8 @@ install_selected_tools() {
     local type=$3
     
     log "Installing $type..."
-    for key in "${(@k)tools}"; do
-        if [[ ${#SELECTED_TOOLS[@]} -eq 0 ]] || [[ " ${SELECTED_TOOLS[@]} " =~ " ${key} " ]]; then
+    for key in ${(k)tools}; do
+        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[@]} " =~ " $key " ]]; then
             install_tool "${tools[$key]}" "$is_cask"
         fi
     done
