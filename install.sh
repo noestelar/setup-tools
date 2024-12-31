@@ -1,4 +1,5 @@
 #!/usr/bin/env zsh
+# set -x  # ← Uncomment this line if you want to see each command as it runs (debug mode).
 
 ###############################################################################
 # Script to install tools and languages using Homebrew (Zsh version).
@@ -30,7 +31,9 @@ Example:
 EOF
 }
 
+###############################################################################
 # Parse command line arguments
+###############################################################################
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
@@ -59,13 +62,15 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+###############################################################################
 # Log files
+###############################################################################
 typeset LOG_FILE="install.log"
 typeset ERROR_LOG_FILE="error.log"
 
 # Initialize log files
-> "$LOG_FILE"         # Clear log file
-> "$ERROR_LOG_FILE"   # Clear error log file
+> "$LOG_FILE"
+> "$ERROR_LOG_FILE"
 
 # Logging functions
 function log() {
@@ -79,13 +84,17 @@ function log_error() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR: $1" | tee -a "$ERROR_LOG_FILE"
 }
 
+###############################################################################
 # Check if running on macOS
+###############################################################################
 if [[ "$(uname)" != "Darwin" ]]; then
   log_error "This script is designed for macOS only. Exiting."
   exit 1
 fi
 
+###############################################################################
 # Check for Homebrew, install if not found
+###############################################################################
 if ! command -v brew &>/dev/null; then
   log "Homebrew not found. Would install Homebrew..."
   if [[ "$DRY_RUN" == false ]]; then
@@ -101,26 +110,27 @@ if ! command -v brew &>/dev/null; then
     log "Homebrew installed successfully."
   fi
 else
-  log "Homebrew already installed. Would update..."
-  if [[ "$DRY_RUN" == false ]]; then
-    brew update || log_error "Failed to update Homebrew."
-    brew upgrade || log_error "Failed to upgrade Homebrew packages."
-    log "Homebrew is up to date."
-  fi
+  log "Homebrew already installed."
+  # The following lines often cause freezing if there's a license or network issue.
+  # Uncomment them if you want the script to update/upgrade Homebrew automatically:
+  #
+  # if [[ "$DRY_RUN" == false ]]; then
+  #   brew update || log_error "Failed to update Homebrew."
+  #   brew upgrade || log_error "Failed to upgrade Homebrew packages."
+  #   log "Homebrew is up to date."
+  # fi
 fi
 
 ###############################################################################
-# Define the tools to install
+# Define the tools to install (with chatgpt and cursor included)
 ###############################################################################
-
-# Cask tools (GUI apps)
 typeset -A cask_tools=(
   ["chrome"]="google-chrome"
   ["warp"]="warp"
   ["raycast"]="raycast"
   ["notion"]="notion"
-  ["cursor"]="cursor"
-  ["chatgpt"]="chatgpt"
+  ["cursor"]="cursor"           # ← included
+  ["chatgpt"]="chatgpt"         # ← included
   ["slack"]="slack"
   ["discord"]="discord"
   ["1password"]="1password"
@@ -132,7 +142,6 @@ typeset -A cask_tools=(
   ["docker"]="docker"
 )
 
-# Brew tools (CLI tools and packages)
 typeset -A brew_tools=(
   ["miniconda"]="miniconda"
   ["git"]="git"
@@ -142,23 +151,8 @@ typeset -A brew_tools=(
 )
 
 ###############################################################################
-# Functions
+# Installation Functions
 ###############################################################################
-
-# Verify if a tool exists in Homebrew repos
-function verify_tool() {
-  local tool="$1"
-  local is_cask="$2"
-
-  if [[ "$is_cask" == true ]]; then
-    brew info --cask "$tool" &>/dev/null
-  else
-    brew info "$tool" &>/dev/null
-  fi
-  return $?
-}
-
-# Install a single tool
 function install_tool() {
   local tool="$1"
   local is_cask="$2"
@@ -169,13 +163,7 @@ function install_tool() {
     else
       log "[DRY RUN] Would install formula: $tool"
     fi
-    return 0
-  fi
-
-  # Verify package exists in Homebrew
-  if ! verify_tool "$tool" "$is_cask"; then
-    log_error "Package $tool not found in Homebrew. Skipping."
-    return 1
+    return
   fi
 
   log "Installing $tool..."
@@ -197,18 +185,15 @@ function install_tool() {
   fi
 }
 
-# Install all cask tools (or selected ones)
 function install_cask_tools() {
   log "Installing cask applications..."
   for key in ${(k)cask_tools}; do
-    # If user selected tools, skip unless it's in SELECTED_TOOLS
     if [[ ${#SELECTED_TOOLS[@]} -eq 0 || " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
       install_tool "${cask_tools[$key]}" true
     fi
   done
 }
 
-# Install all brew tools (or selected ones)
 function install_brew_tools() {
   log "Installing brew formulae..."
   for key in ${(k)brew_tools}; do
@@ -221,10 +206,8 @@ function install_brew_tools() {
 ###############################################################################
 # Main Script
 ###############################################################################
-
 log "Starting installation process..."
 
-# Perform installs
 install_cask_tools
 install_brew_tools
 
