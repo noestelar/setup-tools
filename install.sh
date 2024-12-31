@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# set -x  # ← Uncomment for debugging (prints each command as it runs)
+set -x  # ← Uncomment for debugging (prints each command as it runs)
 
 ###############################################################################
 # Script to install tools and languages using Homebrew (Zsh version).
