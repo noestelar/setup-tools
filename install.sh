@@ -126,6 +126,7 @@ declare -A cask_tools=(
     [paw]="paw"
     [vscode]="visual-studio-code"
     [docker]="docker"
+    [orbstack]="orbstack"
 )
 
 declare -A brew_tools=(
