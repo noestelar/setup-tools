@@ -15,11 +15,10 @@ A robust script for automatically setting up a new macOS development environment
 ## Available Tools
 
 ### GUI Applications (Casks)
-- Google Chrome (`chrome`)
 - Warp Terminal (`warp`)
 - Raycast (`raycast`)
 - Notion (`notion`)
-- Cursor IDE (`cursor`)
+- Ghostty Terminal (`ghostty`)
 - ChatGPT (`chatgpt`)
 - Slack (`slack`)
 - Discord (`discord`)
@@ -27,9 +26,9 @@ A robust script for automatically setting up a new macOS development environment
 - Karabiner Elements (`karabiner`)
 - KeyboardCleanTool (`keyboardcleantool`)
 - GitKraken (`gitkraken`)
-- Paw/RapidAPI (`paw`)
 - Visual Studio Code (`vscode`)
 - Docker (`docker`)
+- OrbStack (`orbstack`)
 
 ### Command Line Tools
 - Miniconda (`miniconda`)
@@ -63,7 +62,7 @@ A robust script for automatically setting up a new macOS development environment
    ./install.sh --dry-run
 
    # Install specific tools
-   ./install.sh --select chrome --select slack
+   ./install.sh --select orbstack --select slack
 
    # Verbose output with cleanup
    ./install.sh --verbose --cleanup
