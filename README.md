@@ -19,7 +19,6 @@ A robust script for automatically setting up a new macOS development environment
 - Raycast (`raycast`)
 - Notion (`notion`)
 - Ghostty Terminal (`ghostty`)
-- ChatGPT (`chatgpt`)
 - Slack (`slack`)
 - Discord (`discord`)
 - 1Password (`1password`)
@@ -34,7 +33,7 @@ A robust script for automatically setting up a new macOS development environment
 - Miniconda (`miniconda`)
 - Git (`git`)
 - Node.js (`node`)
-- Python 3.11 (`python`)
+- Python 3.13 (`python`)
 - GitHub CLI (`gh`)
 
 ## Usage
@@ -121,6 +120,17 @@ The script includes robust error handling:
 - Validates package availability before installation
 - Logs all errors for troubleshooting
 - Continues installation even if individual tools fail
+
+## Validation
+
+After installation, run the validation script to check which tools were installed successfully:
+
+```bash
+chmod +x validate.sh
+./validate.sh
+```
+
+The script outputs a pass/fail status for each tool and exits with code 1 if any tool is missing.
 
 ## Contributing
 

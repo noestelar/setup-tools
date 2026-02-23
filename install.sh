@@ -116,7 +116,6 @@ declare -A cask_tools=(
     [raycast]="raycast"
     [notion]="notion"
     [ghostty]="ghostty"
-    [chatgpt]="chatgpt"
     [slack]="slack"
     [discord]="discord"
     [1password]="1password"
@@ -132,7 +131,7 @@ declare -A brew_tools=(
     [miniconda]="miniconda"
     [git]="git"
     [node]="node"
-    [python]="python@3.11"
+    [python]="python@3.13"
     [gh]="gh"
 )
 
