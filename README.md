@@ -1,40 +1,50 @@
 # Setup Tools
 
-A robust script for automatically setting up a new macOS development environment. This script uses Homebrew to install and manage various development tools, applications, and utilities.
+A robust script for automatically setting up a new development environment. This script supports both macOS and Linux, using Homebrew (macOS) or apt/dnf (Linux) to install and manage various development tools, applications, and utilities.
 
 ## Features
 
-- 🚀 One-command setup for new macOS machines
+- 🚀 One-command setup for new machines
 - 🔍 Dry run mode to preview installations
 - 📦 Selective tool installation
 - 📝 Detailed logging and error tracking
 - 🧹 Optional cleanup functionality
-- 🔄 Automatic Homebrew installation and updates
-- 💻 Support for both Intel and Apple Silicon Macs
+- 🔄 Automatic package manager installation and updates
+- 💻 Support for macOS (Intel and Apple Silicon) and Linux
 
 ## Available Tools
 
 ### GUI Applications (Casks)
-- Warp Terminal (`warp`)
+
+**macOS only:**
 - Raycast (`raycast`)
-- Notion (`notion`)
+- Karabiner Elements (`karabiner`)
+- OrbStack (`orbstack`)
+- KeyboardCleanTool (`keyboardcleantool`)
+
+**Linux & macOS:**
+- Warp Terminal (`warp`)
 - Ghostty Terminal (`ghostty`)
+- Notion (`notion`)
 - Slack (`slack`)
 - Discord (`discord`)
 - 1Password (`1password`)
-- Karabiner Elements (`karabiner`)
-- KeyboardCleanTool (`keyboardcleantool`)
 - GitKraken (`gitkraken`)
 - Visual Studio Code (`vscode`)
-- Docker (`docker`)
-- OrbStack (`orbstack`)
+- Docker (`docker`) - OrbStack on macOS, Docker Engine on Linux
 
 ### Command Line Tools
+
+**macOS only:**
 - Miniconda (`miniconda`)
-- Git (`git`)
-- Node.js (`node`)
 - Python 3.13 (`python`)
+
+**Linux & macOS:**
+- Git (`git`)
+- Node.js (`node`) - via Homebrew (macOS) or fnm (Linux)
 - GitHub CLI (`gh`)
+- OpenCode CLI (`opencode`)
+- fnm (`fnm`) - Linux only (Node version manager)
 
 ## Usage
 
@@ -50,22 +60,25 @@ A robust script for automatically setting up a new macOS development environment
    ```
 
 3. Run the script with desired options:
-   ```bash
-   # Full installation
-   ./install.sh
+    ```bash
+    # Full installation (auto-detects OS)
+    ./install.sh
 
-   # Show help
-   ./install.sh --help
+    # Show help
+    ./install.sh --help
 
-   # Dry run to preview changes
-   ./install.sh --dry-run
+    # Dry run to preview changes
+    ./install.sh --dry-run
 
-   # Install specific tools
-   ./install.sh --select orbstack --select slack
+    # Install specific tools
+    ./install.sh --select warp --select docker
 
-   # Verbose output with cleanup
-   ./install.sh --verbose --cleanup
-   ```
+    # Force Linux installation on WSL/cross-compile
+    ./install.sh --os linux
+
+    # Verbose output with cleanup
+    ./install.sh --verbose --cleanup
+    ```
 
 ## Command Line Options
 
@@ -75,6 +88,7 @@ A robust script for automatically setting up a new macOS development environment
 | `--verbose` | Show detailed output during installation |
 | `--cleanup` | Clean up caches after installation |
 | `--select TOOL` | Install only specific tools (can be used multiple times) |
+| `--os OS` | Force OS: macos or linux (auto-detected by default) |
 | `--help` | Show help message |
 
 ## Logging
@@ -108,15 +122,15 @@ After running the script, you might want to:
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel)
+- macOS (Apple Silicon or Intel) OR Linux (Ubuntu/Debian/Arch)
 - Internet connection
-- Administrator privileges (for installation)
+- Administrator/sudo privileges (for installation)
 
 ## Error Handling
 
 The script includes robust error handling:
-- Verifies macOS compatibility
-- Checks for successful Homebrew installation
+- Verifies OS compatibility (macOS or Linux)
+- Checks for successful package manager installation
 - Validates package availability before installation
 - Logs all errors for troubleshooting
 - Continues installation even if individual tools fail
