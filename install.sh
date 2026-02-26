@@ -28,7 +28,7 @@ Options:
     --cleanup           Clean up caches after installation
     --select TOOL       Install only specific tools (can be used multiple times)
     --debug            Enable debug mode (shows all commands)
-    --os OS            Force OS: macos or linux (auto-detected by default)
+    --os OS            Force OS: macos, linux, or bazzite (auto-detected by default)
     --help             Show this help message
 
 Example:
@@ -84,7 +84,7 @@ parse_args() {
                 ;;
             --os)
                 if [[ -z "$2" ]]; then
-                    echo "Error: --os requires an argument (macos or linux)"
+                    echo "Error: --os requires an argument (macos, linux, or bazzite)"
                     exit 1
                 fi
                 OS_TYPE="$2"
@@ -115,7 +115,12 @@ detect_os() {
             OS_TYPE="macos"
             ;;
         Linux)
-            OS_TYPE="linux"
+            # Detect immutable Fedora-based desktops (Bazzite, Bluefin, Silverblue, etc.)
+            if command -v rpm-ostree &>/dev/null; then
+                OS_TYPE="bazzite"
+            else
+                OS_TYPE="linux"
+            fi
             ;;
         *)
             log_error "Unsupported operating system"
@@ -174,6 +179,28 @@ declare -A linux_apt_tools=(
 declare -A linux_brew_tools=(
     [fnm]="fnm"
     [node]="nodejs"
+)
+
+# Bazzite / Fedora Atomic: GUI apps via Flatpak, CLI tools via Homebrew
+# macOS-only tools (karabiner, keyboardcleantool, orbstack, raycast) are omitted
+# Notion has no reliable Flatpak; access via web or install manually
+declare -A bazzite_flatpak_tools=(
+    [1password]="com.onepassword.OnePassword"
+    [discord]="com.discordapp.Discord"
+    [gitkraken]="com.axosoft.GitKraken"
+    [slack]="com.slack.Slack"
+    [vscode]="com.visualstudio.code"
+    [warp]="dev.warp.Warp"
+)
+
+declare -A bazzite_brew_tools=(
+    [gh]="gh"
+    [ghostty]="ghostty"
+    [git]="git"
+    [miniconda]="miniconda"
+    [node]="node"
+    [opencode]="opencode"
+    [python]="python@3.13"
 )
 
 install_tool_macos() {
@@ -339,6 +366,110 @@ install_docker_linux() {
     echo "Docker Engine installed successfully"
 }
 
+# --- Bazzite / Fedora Atomic functions ---
+
+install_bazzite_flatpak_tool() {
+    local tool="$1"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[DRY RUN] Would install flatpak: $tool"
+        return 0
+    fi
+
+    echo "Installing $tool..."
+    flatpak install -y flathub "$tool" || {
+        log_error "$tool flatpak installation failed"
+        return 1
+    }
+    echo "$tool installed successfully"
+}
+
+setup_homebrew_bazzite() {
+    echo "Setting up Homebrew on Bazzite..."
+    if ! command -v brew &>/dev/null; then
+        echo "Homebrew not found. Installing..."
+        if [[ "$DRY_RUN" == "false" ]]; then
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
+                log_error "Failed to install Homebrew"
+                return 1
+            }
+            (echo; echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"') >> ~/.bashrc
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+        fi
+        echo "Homebrew installation completed"
+    else
+        echo "Homebrew found. Updating..."
+        if [[ "$DRY_RUN" == "false" ]]; then
+            brew update || log_error "Failed to update Homebrew"
+            brew upgrade || log_error "Failed to upgrade Homebrew packages"
+        fi
+        echo "Homebrew update completed"
+    fi
+}
+
+install_bazzite_brew_tool() {
+    local tool="$1"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[DRY RUN] Would install brew: $tool"
+        return 0
+    fi
+
+    echo "Verifying $tool..."
+    if ! brew info "$tool" &>/dev/null; then
+        log_error "Package $tool not found in Homebrew. Skipping."
+        return 1
+    fi
+
+    echo "Installing $tool..."
+    brew install "$tool" || {
+        log_error "$tool installation failed"
+        return 1
+    }
+    echo "$tool installed successfully"
+}
+
+install_selected_bazzite_tools() {
+    echo "Starting installation of tools on Bazzite..."
+
+    if (( ${#SELECTED_TOOLS[@]} > 0 )); then
+        echo "Selected tools: ${SELECTED_TOOLS[*]}"
+    else
+        echo "Installing all available tools"
+    fi
+
+    echo "Installing Flatpak applications..."
+    for key in "${!bazzite_flatpak_tools[@]}"; do
+        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
+            echo "Processing flatpak: $key..."
+            install_bazzite_flatpak_tool "${bazzite_flatpak_tools[$key]}"
+        fi
+    done
+
+    echo "Installing Homebrew packages..."
+    for key in "${!bazzite_brew_tools[@]}"; do
+        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
+            echo "Processing brew: $key..."
+            install_bazzite_brew_tool "${bazzite_brew_tools[$key]}"
+        fi
+    done
+
+    echo "Completed installation of Bazzite tools"
+    echo "Note: Docker is not installed — Bazzite ships with Podman pre-installed"
+}
+
+cleanup_bazzite() {
+    if [[ "$CLEANOSE" == "true" ]]; then
+        echo "Running cleanup..."
+        if [[ "$DRY_RUN" == "false" ]]; then
+            flatpak uninstall --unused -y || log_error "Failed to clean up unused Flatpak runtimes"
+            brew cleanup || log_error "Failed to clean up Homebrew cache"
+        else
+            echo "[DRY RUN] Would clean up Flatpak and Homebrew caches"
+        fi
+    fi
+}
+
 install_selected_macos_tools() {
     local tool_type="$3"
     echo "Starting installation of $tool_type on macOS..."
@@ -489,6 +620,11 @@ main() {
         echo "Installing tools..."
         install_selected_linux_tools
         cleanup_linux
+    elif [[ "$OS_TYPE" == "bazzite" ]]; then
+        setup_homebrew_bazzite
+        echo "Installing tools..."
+        install_selected_bazzite_tools
+        cleanup_bazzite
     fi
     
     echo "Installation process completed"
