@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -e
+# Do not use set -e; individual failures must not abort the full run
 
 DRY_RUN=false
 VERBOSE=false
