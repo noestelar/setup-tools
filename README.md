@@ -1,6 +1,6 @@
 # Setup Tools
 
-A robust script for automatically setting up a new development environment. This script supports both macOS and Linux, using Homebrew (macOS) or apt/dnf (Linux) to install and manage various development tools, applications, and utilities.
+A robust script for automatically setting up a new development environment. It supports macOS, Linux, and Bazzite/Fedora Atomic. The installer uses Homebrew and Flatpak on immutable systems, and apt/Homebrew on standard Linux distros.
 
 ## Features
 
@@ -10,7 +10,7 @@ A robust script for automatically setting up a new development environment. This
 - 📝 Detailed logging and error tracking
 - 🧹 Optional cleanup functionality
 - 🔄 Automatic package manager installation and updates
-- 💻 Support for macOS (Intel and Apple Silicon) and Linux
+- 💻 Support for macOS (Intel/Apple Silicon), Linux, and Bazzite/Fedora Atomic
 
 ## Available Tools
 
@@ -46,6 +46,11 @@ A robust script for automatically setting up a new development environment. This
 - OpenCode CLI (`opencode`)
 - fnm (`fnm`) - Linux only (Node version manager)
 
+### Bazzite Experimental (opt-in)
+- `kwin-mcp-experimental` — installs `kwin-mcp` via `uv` for KDE/Wayland desktop automation.
+  - Not installed by default.
+  - Useful for future automation setups, but currently marked experimental due to upstream/runtime instability on some KDE/Python combinations.
+
 ## Usage
 
 1. Clone this repository:
@@ -76,6 +81,9 @@ A robust script for automatically setting up a new development environment. This
     # Force Linux installation on WSL/cross-compile
     ./install.sh --os linux
 
+    # Install experimental kwin-mcp setup on Bazzite
+    ./install.sh --os bazzite --select kwin-mcp-experimental
+
     # Verbose output with cleanup
     ./install.sh --verbose --cleanup
     ```
@@ -88,7 +96,7 @@ A robust script for automatically setting up a new development environment. This
 | `--verbose` | Show detailed output during installation |
 | `--cleanup` | Clean up caches after installation |
 | `--select TOOL` | Install only specific tools (can be used multiple times) |
-| `--os OS` | Force OS: macos or linux (auto-detected by default) |
+| `--os OS` | Force OS: macos, linux, or bazzite (auto-detected by default) |
 | `--help` | Show help message |
 
 ## Logging
@@ -122,7 +130,7 @@ After running the script, you might want to:
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel) OR Linux (Ubuntu/Debian/Arch)
+- macOS (Apple Silicon or Intel) OR Linux (Ubuntu/Debian/Arch) OR Bazzite/Fedora Atomic
 - Internet connection
 - Administrator/sudo privileges (for installation)
 

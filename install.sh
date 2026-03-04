@@ -31,9 +31,13 @@ Options:
     --os OS            Force OS: macos, linux, or bazzite (auto-detected by default)
     --help             Show this help message
 
+Bazzite experimental selectors:
+    --select kwin-mcp-experimental   Install kwin-mcp via uv (NOT default; may be unstable)
+
 Example:
     ./install.sh --dry-run
-    ./install.sh --select chrome --select slack
+    ./install.sh --select warp --select slack
+    ./install.sh --select kwin-mcp-experimental --os bazzite
     ./install.sh --verbose --cleanup
     ./install.sh --os linux
 EOF
@@ -201,6 +205,10 @@ declare -A bazzite_brew_tools=(
     [node]="node"
     [opencode]="opencode"
     [python]="python@3.13"
+)
+
+declare -A bazzite_experimental_tools=(
+    [kwin-mcp-experimental]="kwin-mcp"
 )
 
 install_tool_macos() {
@@ -429,6 +437,39 @@ install_bazzite_brew_tool() {
     echo "$tool installed successfully"
 }
 
+install_bazzite_kwin_mcp_experimental() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[DRY RUN] Would install kwin-mcp via uv tool"
+        echo "[DRY RUN] Would run: uv tool install kwin-mcp --python /usr/bin/python3"
+        return 0
+    fi
+
+    echo "Installing kwin-mcp experimental setup..."
+
+    if ! command -v uv &>/dev/null; then
+        echo "uv not found. Installing via Homebrew..."
+        install_bazzite_brew_tool "uv" || {
+            log_error "Unable to install uv; skipping kwin-mcp"
+            return 1
+        }
+    fi
+
+    uv tool install kwin-mcp --python /usr/bin/python3 || {
+        echo "kwin-mcp already installed or install failed; trying upgrade..."
+        uv tool upgrade kwin-mcp || {
+            log_error "kwin-mcp install/upgrade failed"
+            return 1
+        }
+    }
+
+    cat <<'NOTE'
+kwin-mcp installed (experimental).
+Important on Bazzite/KDE:
+  - If you hit session_start segfaults, install/update system deps via rpm-ostree and reboot.
+  - Keep wrapper scripts (kwin-mcp-run / kwin-mcp-cleanup) from dotfiles in ~/.local/bin.
+NOTE
+}
+
 install_selected_bazzite_tools() {
     echo "Starting installation of tools on Bazzite..."
 
@@ -451,6 +492,18 @@ install_selected_bazzite_tools() {
         if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
             echo "Processing brew: $key..."
             install_bazzite_brew_tool "${bazzite_brew_tools[$key]}"
+        fi
+    done
+
+    echo "Installing Bazzite experimental tools (opt-in only)..."
+    for key in "${!bazzite_experimental_tools[@]}"; do
+        if (( ${#SELECTED_TOOLS[@]} > 0 )) && [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
+            echo "Processing experimental: $key..."
+            case "$key" in
+                kwin-mcp-experimental)
+                    install_bazzite_kwin_mcp_experimental
+                    ;;
+            esac
         fi
     done
 
