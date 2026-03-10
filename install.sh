@@ -1,25 +1,26 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 
 # Do not use set -e; individual failures must not abort the full run
 
 DRY_RUN=false
 VERBOSE=false
-CLEANOSE=false
-typeset -a SELECTED_TOOLS
+CLEANUP=false
 OS_TYPE=""
 
 LOG_FILE="install.log"
 ERROR_LOG_FILE="error.log"
 
-init_logs() {
-    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$ERROR_LOG_FILE")"
-    : > "$LOG_FILE"
-    : > "$ERROR_LOG_FILE"
-    echo "Log files initialized"
-}
+typeset -a SELECTED_TOOLS=()
+
+typeset -g APT_UPDATED=false
+typeset -g BREW_READY=unknown
+typeset -g BREW_UPDATED=false
+typeset -g FLATPAK_READY=false
+typeset -g PACMAN_READY=unknown
+typeset -g PACMAN_SYNCED=false
 
 show_help() {
-    cat << EOF
+    cat <<'EOF'
 Usage: ./install.sh [options]
 
 Options:
@@ -27,9 +28,9 @@ Options:
     --verbose           Show detailed output during installation
     --cleanup           Clean up caches after installation
     --select TOOL       Install only specific tools (can be used multiple times)
-    --debug            Enable debug mode (shows all commands)
-    --os OS            Force OS: macos, linux, or bazzite (auto-detected by default)
-    --help             Show this help message
+    --debug             Enable debug mode (shows all commands)
+    --os OS             Force OS: macos, linux, bazzite, or archlike
+    --help              Show this help message
 
 Bazzite experimental selectors:
     --select kwin-mcp-experimental   Install kwin-mcp via uv (NOT default; may be unstable)
@@ -39,13 +40,15 @@ Example:
     ./install.sh --select warp --select slack
     ./install.sh --select kwin-mcp-experimental --os bazzite
     ./install.sh --verbose --cleanup
-    ./install.sh --os linux
+    ./install.sh --os archlike
 EOF
 }
 
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+    local timestamp
+    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "$timestamp - $1"
+    echo "$timestamp - $1" >> "$LOG_FILE"
     if [[ "$VERBOSE" == "true" && -n "$2" ]]; then
         echo "Details: $2"
         echo "Details: $2" >> "$LOG_FILE"
@@ -53,14 +56,33 @@ log() {
 }
 
 log_error() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR: $1" | tee -a "$ERROR_LOG_FILE"
+    local timestamp
+    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "$timestamp - ERROR: $1" | tee -a "$ERROR_LOG_FILE"
+}
+
+init_logs() {
+    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$ERROR_LOG_FILE")"
+    : > "$LOG_FILE"
+    : > "$ERROR_LOG_FILE"
+    echo "Log files initialized"
+}
+
+is_supported_os() {
+    case "$1" in
+        archlike|bazzite|linux|macos)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 parse_args() {
     echo "Parsing arguments..."
     while [[ $# -gt 0 ]]; do
-        key="$1"
-        case "$key" in
+        case "$1" in
             --dry-run)
                 DRY_RUN=true
                 echo "Dry run mode enabled"
@@ -70,7 +92,7 @@ parse_args() {
                 echo "Verbose mode enabled"
                 ;;
             --cleanup)
-                CLEANOSE=true
+                CLEANUP=true
                 echo "Cleanup mode enabled"
                 ;;
             --debug)
@@ -88,7 +110,11 @@ parse_args() {
                 ;;
             --os)
                 if [[ -z "$2" ]]; then
-                    echo "Error: --os requires an argument (macos, linux, or bazzite)"
+                    echo "Error: --os requires an argument (macos, linux, bazzite, or archlike)"
+                    exit 1
+                fi
+                if ! is_supported_os "$2"; then
+                    echo "Error: unsupported OS '$2'"
                     exit 1
                 fi
                 OS_TYPE="$2"
@@ -109,21 +135,45 @@ parse_args() {
     done
 }
 
+os_release_field() {
+    local key="$1"
+    local value=""
+
+    if [[ -r /etc/os-release ]]; then
+        value="$(awk -F= -v key="$key" '$1 == key { print $2; exit }' /etc/os-release 2>/dev/null)"
+        value="${value#\"}"
+        value="${value%\"}"
+    fi
+
+    print -r -- "$value"
+}
+
 detect_os() {
     if [[ -n "$OS_TYPE" ]]; then
         return 0
     fi
-    
-    case "$(uname)" in
+
+    case "$(uname -s)" in
         Darwin)
             OS_TYPE="macos"
             ;;
         Linux)
-            # Detect immutable Fedora-based desktops (Bazzite, Bluefin, Silverblue, etc.)
-            if command -v rpm-ostree &>/dev/null; then
+            if command -v rpm-ostree >/dev/null 2>&1; then
                 OS_TYPE="bazzite"
             else
-                OS_TYPE="linux"
+                local distro_id
+                local distro_like
+                local distro_tags
+
+                distro_id="$(os_release_field ID)"
+                distro_like="$(os_release_field ID_LIKE)"
+                distro_tags="${distro_id:l} ${distro_like:l}"
+
+                if [[ "$distro_tags" == *arch* ]] || [[ "$distro_tags" == *cachyos* ]]; then
+                    OS_TYPE="archlike"
+                else
+                    OS_TYPE="linux"
+                fi
             fi
             ;;
         *)
@@ -131,6 +181,7 @@ detect_os() {
             exit 1
             ;;
     esac
+
     echo "Detected OS: $OS_TYPE"
 }
 
@@ -140,55 +191,47 @@ check_system() {
     echo "System check passed for $OS_TYPE"
 }
 
-declare -A macos_cask_tools=(
-    [warp]="warp"
-    [raycast]="raycast"
-    [notion]="notion"
-    [ghostty]="ghostty"
-    [slack]="slack"
-    [discord]="discord"
+typeset -A macos_cask_tools=(
     [1password]="1password"
+    [discord]="discord"
+    [docker]="docker"
+    [ghostty]="ghostty"
+    [gitkraken]="gitkraken"
     [karabiner]="karabiner-elements"
     [keyboardcleantool]="keyboardcleantool"
-    [gitkraken]="gitkraken"
-    [vscode]="visual-studio-code"
-    [docker]="docker"
-    [orbstack]="orbstack"
-)
-
-declare -A macos_brew_tools=(
-    [miniconda]="miniconda"
-    [git]="git"
-    [node]="node"
-    [python]="python@3.13"
-    [gh]="gh"
-    [opencode]="opencode"
-)
-
-declare -A linux_apt_tools=(
-    [warp]="warp"
-    [ghostty]="ghostty"
     [notion]="notion"
+    [orbstack]="orbstack"
+    [raycast]="raycast"
     [slack]="slack"
-    [discord]="discord"
-    [1password]="1password"
-    [gitkraken]="gitkraken"
-    [vscode]="code"
-    [docker]="docker.io"
-    [git]="git"
+    [vscode]="visual-studio-code"
+    [warp]="warp"
+)
+
+typeset -A macos_brew_tools=(
     [gh]="gh"
+    [git]="git"
+    [miniconda]="miniconda"
+    [node]="node"
+    [opencode]="opencode"
+    [python]="python@3.13"
+)
+
+typeset -A linux_apt_tools=(
+    [docker]="docker.io"
+    [gh]="gh"
+    [git]="git"
+    [node]="nodejs"
+    [python]="python3"
+)
+
+typeset -A linux_brew_tools=(
+    [fnm]="fnm"
+    [ghostty]="ghostty"
+    [miniconda]="miniconda"
     [opencode]="opencode"
 )
 
-declare -A linux_brew_tools=(
-    [fnm]="fnm"
-    [node]="nodejs"
-)
-
-# Bazzite / Fedora Atomic: GUI apps via Flatpak, CLI tools via Homebrew
-# macOS-only tools (karabiner, keyboardcleantool, orbstack, raycast) are omitted
-# Notion has no reliable Flatpak; access via web or install manually
-declare -A bazzite_flatpak_tools=(
+typeset -A linux_flatpak_tools=(
     [1password]="com.onepassword.OnePassword"
     [discord]="com.discordapp.Discord"
     [gitkraken]="com.axosoft.GitKraken"
@@ -197,7 +240,8 @@ declare -A bazzite_flatpak_tools=(
     [warp]="dev.warp.Warp"
 )
 
-declare -A bazzite_brew_tools=(
+typeset -A bazzite_brew_tools=(
+    [fnm]="fnm"
     [gh]="gh"
     [ghostty]="ghostty"
     [git]="git"
@@ -207,46 +251,157 @@ declare -A bazzite_brew_tools=(
     [python]="python@3.13"
 )
 
-declare -A bazzite_experimental_tools=(
+typeset -A bazzite_experimental_tools=(
     [kwin-mcp-experimental]="kwin-mcp"
 )
 
-install_tool_macos() {
-    local tool="$1"
-    local is_cask="$2"
-    
-    if [[ "$is_cask" == "true" ]]; then
-        brew info --cask "$tool" &>/dev/null
-    else
-        brew info "$tool" &>/dev/null
-    fi
-}
+typeset -A bazzite_flatpak_tools=(
+    [1password]="com.onepassword.OnePassword"
+    [discord]="com.discordapp.Discord"
+    [gitkraken]="com.axosoft.GitKraken"
+    [slack]="com.slack.Slack"
+    [vscode]="com.visualstudio.code"
+    [warp]="dev.warp.Warp"
+)
 
-install_tool_linux_apt() {
-    local tool="$1"
-    apt-cache show "$tool" &>/dev/null
-}
+typeset -A archlike_aur_tools=(
+    [fnm]="fnm"
+    [miniconda]="miniconda3"
+)
 
-install_tool_linux_brew() {
-    local tool="$1"
-    brew info "$tool" &>/dev/null
-}
+typeset -A archlike_brew_tools=(
+    [opencode]="opencode"
+)
 
-install_macos_tool() {
-    local tool="$1"
-    local is_cask="$2"
-    
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo "[DRY RUN] Would install ${is_cask:+cask: }$tool"
+typeset -A archlike_flatpak_tools=(
+    [1password]="com.onepassword.OnePassword"
+    [gitkraken]="com.axosoft.GitKraken"
+    [slack]="com.slack.Slack"
+    [warp]="dev.warp.Warp"
+)
+
+typeset -A archlike_pacman_tools=(
+    [discord]="discord"
+    [docker]="docker"
+    [gh]="github-cli"
+    [git]="git"
+    [ghostty]="ghostty"
+    [node]="nodejs"
+    [python]="python"
+    [vscode]="code"
+)
+
+should_install_tool() {
+    local requested="$1"
+    local selected
+
+    if (( ${#SELECTED_TOOLS[@]} == 0 )); then
         return 0
     fi
-    
-    echo "Verifying $tool..."
-    if ! install_tool_macos "$tool" "$is_cask"; then
-        log_error "Package $tool not found in Homebrew. Skipping."
+
+    for selected in "${SELECTED_TOOLS[@]}"; do
+        if [[ "$selected" == "$requested" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+contains_value() {
+    local needle="$1"
+    shift
+
+    local value
+    for value in "$@"; do
+        if [[ "$value" == "$needle" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+report_unavailable_selected_tools() {
+    local mode="$1"
+    shift
+
+    if (( ${#SELECTED_TOOLS[@]} == 0 )); then
+        return 0
+    fi
+
+    local selected
+    for selected in "${SELECTED_TOOLS[@]}"; do
+        if ! contains_value "$selected" "$@"; then
+            log_error "Tool '$selected' is not available in $mode mode."
+        fi
+    done
+}
+
+announce_selection() {
+    if (( ${#SELECTED_TOOLS[@]} > 0 )); then
+        echo "Selected tools: ${SELECTED_TOOLS[*]}"
+    else
+        echo "Installing all available tools"
+    fi
+}
+
+ensure_homebrew_ready() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        return 0
+    fi
+
+    if [[ "$BREW_READY" == "false" ]]; then
         return 1
     fi
-    
+
+    if [[ "$BREW_READY" == "unknown" ]]; then
+        if ! command -v brew >/dev/null 2>&1; then
+            log_error "Homebrew is not installed. Skipping brew-managed tools."
+            BREW_READY=false
+            return 1
+        fi
+        BREW_READY=true
+    fi
+
+    if [[ "$BREW_UPDATED" == "false" ]]; then
+        brew update || log_error "Failed to update Homebrew"
+        brew upgrade || log_error "Failed to upgrade Homebrew packages"
+        BREW_UPDATED=true
+    fi
+
+    return 0
+}
+
+install_brew_tool() {
+    local tool="$1"
+    local is_cask="${2:-false}"
+    local label="brew"
+
+    if [[ "$is_cask" == "true" ]]; then
+        label="brew cask"
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[DRY RUN] Would install $label: $tool"
+        return 0
+    fi
+
+    ensure_homebrew_ready || return 1
+
+    echo "Verifying $tool..."
+    if [[ "$is_cask" == "true" ]]; then
+        brew info --cask "$tool" >/dev/null 2>&1 || {
+            log_error "Package $tool not found in Homebrew Cask. Skipping."
+            return 1
+        }
+    else
+        brew info "$tool" >/dev/null 2>&1 || {
+            log_error "Package $tool not found in Homebrew. Skipping."
+            return 1
+        }
+    fi
+
     echo "Installing $tool..."
     if [[ "$is_cask" == "true" ]]; then
         brew install --cask "$tool" || {
@@ -259,181 +414,233 @@ install_macos_tool() {
             return 1
         }
     fi
+
     echo "$tool installed successfully"
 }
 
-install_linux_apt_tool() {
+ensure_apt_ready() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        return 0
+    fi
+
+    if ! command -v apt-get >/dev/null 2>&1; then
+        log_error "apt-get is not available. Skipping apt-managed tools."
+        return 1
+    fi
+
+    if [[ "$APT_UPDATED" == "false" ]]; then
+        sudo apt-get update || {
+            log_error "Failed to update apt"
+            return 1
+        }
+        APT_UPDATED=true
+    fi
+
+    return 0
+}
+
+install_apt_tool() {
     local tool="$1"
-    
+
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "[DRY RUN] Would install apt: $tool"
         return 0
     fi
-    
+
+    ensure_apt_ready || return 1
+
     echo "Verifying $tool..."
-    if ! install_tool_linux_apt "$tool"; then
+    apt-cache show "$tool" >/dev/null 2>&1 || {
         log_error "Package $tool not found in apt. Skipping."
         return 1
-    fi
-    
-    echo "Installing $tool..."
-    sudo apt-get update || {
-        log_error "Failed to update apt"
-        return 1
     }
+
+    echo "Installing $tool..."
     sudo apt-get install -y "$tool" || {
         log_error "$tool installation failed"
         return 1
     }
+
     echo "$tool installed successfully"
 }
 
-install_linux_brew_tool() {
-    local tool="$1"
-    
+ensure_pacman_ready() {
     if [[ "$DRY_RUN" == "true" ]]; then
-        echo "[DRY RUN] Would install brew: $tool"
         return 0
     fi
-    
-    if ! command -v brew &>/dev/null; then
-        echo "Installing Homebrew on Linux..."
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
-            log_error "Failed to install Homebrew"
-            return 1
-        }
-        (echo; echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"') >> ~/.bashrc
-        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-    fi
-    
-    echo "Verifying $tool..."
-    if ! install_tool_linux_brew "$tool"; then
-        log_error "Package $tool not found in Homebrew. Skipping."
+
+    if [[ "$PACMAN_READY" == "false" ]]; then
         return 1
     fi
-    
+
+    if [[ "$PACMAN_READY" == "unknown" ]]; then
+        if ! command -v pacman >/dev/null 2>&1; then
+            log_error "pacman is not available. Skipping pacman-managed tools."
+            PACMAN_READY=false
+            return 1
+        fi
+        PACMAN_READY=true
+    fi
+
+    if [[ "$PACMAN_SYNCED" == "false" ]]; then
+        sudo pacman -Syu --noconfirm || {
+            log_error "Failed to synchronize pacman packages"
+            return 1
+        }
+        PACMAN_SYNCED=true
+    fi
+
+    return 0
+}
+
+install_pacman_tool() {
+    local tool="$1"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[DRY RUN] Would install pacman: $tool"
+        return 0
+    fi
+
+    ensure_pacman_ready || return 1
+
+    echo "Verifying $tool..."
+    pacman -Si "$tool" >/dev/null 2>&1 || {
+        log_error "Package $tool not found in pacman. Skipping."
+        return 1
+    }
+
     echo "Installing $tool..."
-    brew install "$tool" || {
+    sudo pacman -S --needed --noconfirm "$tool" || {
         log_error "$tool installation failed"
         return 1
     }
+
     echo "$tool installed successfully"
 }
 
-install_fnm_linux() {
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo "[DRY RUN] Would install fnm"
+detect_aur_helper() {
+    if command -v paru >/dev/null 2>&1; then
+        print -r -- "paru"
         return 0
     fi
-    
-    if command -v fnm &>/dev/null; then
-        echo "fnm already installed"
+
+    if command -v yay >/dev/null 2>&1; then
+        print -r -- "yay"
         return 0
     fi
-    
-    echo "Installing fnm..."
-    curl -fsSL https://fnm.vercel.app/install | bash
-    
-    if [[ -s "$HOME/.bashrc" ]]; then
-        echo 'export PATH="$HOME/.local/share/fnm:$PATH"' >> ~/.bashrc
-        echo 'eval "$(fnm env)"' >> ~/.bashrc
-    fi
-    
-    fnm install --lts
-    fnm default lts-latest
-    
-    echo "fnm installed successfully"
+
+    return 1
 }
 
-install_docker_linux() {
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo "[DRY RUN] Would install Docker Engine"
-        return 0
-    fi
-    
-    if command -v docker &>/dev/null; then
-        echo "Docker already installed"
-        return 0
-    fi
-    
-    echo "Installing Docker Engine..."
-    
-    sudo apt-get update
-    sudo apt-get install -y ca-certificates curl gnupg lsb-release
-    
-    sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    
-    sudo apt-get update
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    
-    sudo usermod -aG docker "$USER"
-    
-    echo "Docker Engine installed successfully"
-}
-
-# --- Bazzite / Fedora Atomic functions ---
-
-install_bazzite_flatpak_tool() {
+install_aur_tool() {
     local tool="$1"
+    local helper=""
+
+    if helper="$(detect_aur_helper)"; then
+        :
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ -n "$helper" ]]; then
+            echo "[DRY RUN] Would install AUR via $helper: $tool"
+        else
+            echo "[DRY RUN] Would install AUR: $tool (requires paru or yay)"
+        fi
+        return 0
+    fi
+
+    if [[ -z "$helper" ]]; then
+        log_error "No AUR helper (paru or yay) found. Skipping $tool."
+        return 1
+    fi
+
+    echo "Verifying $tool..."
+    "$helper" -Si "$tool" >/dev/null 2>&1 || {
+        log_error "Package $tool not found in AUR. Skipping."
+        return 1
+    }
+
+    echo "Installing $tool via $helper..."
+    "$helper" -S --needed --noconfirm "$tool" || {
+        log_error "$tool installation failed"
+        return 1
+    }
+
+    echo "$tool installed successfully"
+}
+
+ensure_flatpak_ready() {
+    local bootstrapper="${1:-none}"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        return 0
+    fi
+
+    if [[ "$FLATPAK_READY" == "true" ]]; then
+        return 0
+    fi
+
+    if ! command -v flatpak >/dev/null 2>&1; then
+        case "$bootstrapper" in
+            apt)
+                ensure_apt_ready || return 1
+                echo "Installing flatpak..."
+                sudo apt-get install -y flatpak || {
+                    log_error "Failed to install flatpak"
+                    return 1
+                }
+                ;;
+            pacman)
+                ensure_pacman_ready || return 1
+                echo "Installing flatpak..."
+                sudo pacman -S --needed --noconfirm flatpak || {
+                    log_error "Failed to install flatpak"
+                    return 1
+                }
+                ;;
+            none)
+                log_error "Flatpak is not installed. Skipping flatpak-managed tools."
+                return 1
+                ;;
+            *)
+                log_error "Unknown flatpak bootstrapper '$bootstrapper'"
+                return 1
+                ;;
+        esac
+    fi
+
+    flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || {
+        log_error "Failed to configure the flathub remote"
+        return 1
+    }
+
+    FLATPAK_READY=true
+    return 0
+}
+
+install_flatpak_tool() {
+    local tool="$1"
+    local bootstrapper="${2:-none}"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "[DRY RUN] Would install flatpak: $tool"
         return 0
     fi
 
+    ensure_flatpak_ready "$bootstrapper" || return 1
+
+    echo "Verifying $tool..."
+    flatpak remote-info flathub "$tool" >/dev/null 2>&1 || {
+        log_error "Package $tool not found in flathub. Skipping."
+        return 1
+    }
+
     echo "Installing $tool..."
     flatpak install -y flathub "$tool" || {
         log_error "$tool flatpak installation failed"
         return 1
     }
-    echo "$tool installed successfully"
-}
 
-setup_homebrew_bazzite() {
-    echo "Setting up Homebrew on Bazzite..."
-    if ! command -v brew &>/dev/null; then
-        echo "Homebrew not found. Installing..."
-        if [[ "$DRY_RUN" == "false" ]]; then
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
-                log_error "Failed to install Homebrew"
-                return 1
-            }
-            (echo; echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"') >> ~/.bashrc
-            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-        fi
-        echo "Homebrew installation completed"
-    else
-        echo "Homebrew found. Updating..."
-        if [[ "$DRY_RUN" == "false" ]]; then
-            brew update || log_error "Failed to update Homebrew"
-            brew upgrade || log_error "Failed to upgrade Homebrew packages"
-        fi
-        echo "Homebrew update completed"
-    fi
-}
-
-install_bazzite_brew_tool() {
-    local tool="$1"
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo "[DRY RUN] Would install brew: $tool"
-        return 0
-    fi
-
-    echo "Verifying $tool..."
-    if ! brew info "$tool" &>/dev/null; then
-        log_error "Package $tool not found in Homebrew. Skipping."
-        return 1
-    fi
-
-    echo "Installing $tool..."
-    brew install "$tool" || {
-        log_error "$tool installation failed"
-        return 1
-    }
     echo "$tool installed successfully"
 }
 
@@ -446,9 +653,9 @@ install_bazzite_kwin_mcp_experimental() {
 
     echo "Installing kwin-mcp experimental setup..."
 
-    if ! command -v uv &>/dev/null; then
+    if ! command -v uv >/dev/null 2>&1; then
         echo "uv not found. Installing via Homebrew..."
-        install_bazzite_brew_tool "uv" || {
+        install_brew_tool "uv" false || {
             log_error "Unable to install uv; skipping kwin-mcp"
             return 1
         }
@@ -470,162 +677,148 @@ Important on Bazzite/KDE:
 NOTE
 }
 
-install_selected_bazzite_tools() {
-    echo "Starting installation of tools on Bazzite..."
-
-    if (( ${#SELECTED_TOOLS[@]} > 0 )); then
-        echo "Selected tools: ${SELECTED_TOOLS[*]}"
-    else
-        echo "Installing all available tools"
-    fi
-
-    echo "Installing Flatpak applications..."
-    for key in "${!bazzite_flatpak_tools[@]}"; do
-        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
-            echo "Processing flatpak: $key..."
-            install_bazzite_flatpak_tool "${bazzite_flatpak_tools[$key]}"
-        fi
-    done
-
-    echo "Installing Homebrew packages..."
-    for key in "${!bazzite_brew_tools[@]}"; do
-        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
-            echo "Processing brew: $key..."
-            install_bazzite_brew_tool "${bazzite_brew_tools[$key]}"
-        fi
-    done
-
-    echo "Installing Bazzite experimental tools (opt-in only)..."
-    for key in "${!bazzite_experimental_tools[@]}"; do
-        if (( ${#SELECTED_TOOLS[@]} > 0 )) && [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
-            echo "Processing experimental: $key..."
-            case "$key" in
-                kwin-mcp-experimental)
-                    install_bazzite_kwin_mcp_experimental
-                    ;;
-            esac
-        fi
-    done
-
-    echo "Completed installation of Bazzite tools"
-    echo "Note: Docker is not installed — Bazzite ships with Podman pre-installed"
-}
-
-cleanup_bazzite() {
-    if [[ "$CLEANOSE" == "true" ]]; then
-        echo "Running cleanup..."
-        if [[ "$DRY_RUN" == "false" ]]; then
-            flatpak uninstall --unused -y || log_error "Failed to clean up unused Flatpak runtimes"
-            brew cleanup || log_error "Failed to clean up Homebrew cache"
-        else
-            echo "[DRY RUN] Would clean up Flatpak and Homebrew caches"
-        fi
-    fi
-}
-
 install_selected_macos_tools() {
-    local tool_type="$3"
-    echo "Starting installation of $tool_type on macOS..."
-    
-    local array_name="$1"
-    local is_cask="$2"
-    
-    if (( ${#SELECTED_TOOLS[@]} > 0 )); then
-        echo "Selected tools: ${SELECTED_TOOLS[*]}"
-    else
-        echo "Installing all available tools"
-    fi
-    
-    case "$array_name" in
-        "cask_tools")
-            for key in "${!macos_cask_tools[@]}"; do
-                if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
-                    echo "Processing $key..."
-                    install_macos_tool "${macos_cask_tools[$key]}" "$is_cask"
-                fi
-            done
-            ;;
-        "brew_tools")
-            for key in "${!macos_brew_tools[@]}"; do
-                if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
-                    echo "Processing $key..."
-                    install_macos_tool "${macos_brew_tools[$key]}" "$is_cask"
-                fi
-            done
-            ;;
-    esac
-    
-    echo "Completed installation of $tool_type"
+    local -a supported=(${(ok)macos_cask_tools} ${(ok)macos_brew_tools})
+    local key
+
+    echo "Starting installation of tools on macOS..."
+    announce_selection
+    report_unavailable_selected_tools "macOS" "${supported[@]}"
+
+    echo "Installing Homebrew casks..."
+    for key in ${(ok)macos_cask_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing cask: $key..."
+        install_brew_tool "${macos_cask_tools[$key]}" true
+    done
+
+    echo "Installing Homebrew formulae..."
+    for key in ${(ok)macos_brew_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing brew: $key..."
+        install_brew_tool "${macos_brew_tools[$key]}" false
+    done
+
+    echo "Completed installation of macOS tools"
 }
 
 install_selected_linux_tools() {
+    local -a supported=(${(ok)linux_apt_tools} ${(ok)linux_brew_tools} ${(ok)linux_flatpak_tools})
+    local key
+
     echo "Starting installation of tools on Linux..."
-    
-    if (( ${#SELECTED_TOOLS[@]} > 0 )); then
-        echo "Selected tools: ${SELECTED_TOOLS[*]}"
-    else
-        echo "Installing all available tools"
-    fi
-    
-    for key in "${!linux_apt_tools[@]}"; do
-        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
-            echo "Processing apt: $key..."
-            install_linux_apt_tool "${linux_apt_tools[$key]}"
-        fi
+    announce_selection
+    report_unavailable_selected_tools "linux" "${supported[@]}"
+
+    echo "Installing apt packages..."
+    for key in ${(ok)linux_apt_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing apt: $key..."
+        install_apt_tool "${linux_apt_tools[$key]}"
     done
-    
-    for key in "${!linux_brew_tools[@]}"; do
-        if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" $key "* ]]; then
-            echo "Processing brew: $key..."
-            install_linux_brew_tool "${linux_brew_tools[$key]}"
-        fi
+
+    echo "Installing Flatpak applications..."
+    for key in ${(ok)linux_flatpak_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing flatpak: $key..."
+        install_flatpak_tool "${linux_flatpak_tools[$key]}" "apt"
     done
-    
-    if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" fnm "* ]]; then
-        echo "Processing: fnm..."
-        install_fnm_linux
-    fi
-    
-    if (( ${#SELECTED_TOOLS[@]} == 0 )) || [[ " ${SELECTED_TOOLS[*]} " == *" docker "* ]]; then
-        echo "Processing: docker..."
-        install_docker_linux
-    fi
-    
+
+    echo "Installing Homebrew packages..."
+    for key in ${(ok)linux_brew_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing brew: $key..."
+        install_brew_tool "${linux_brew_tools[$key]}" false
+    done
+
     echo "Completed installation of Linux tools"
 }
 
-setup_homebrew_macos() {
-    echo "Setting up Homebrew on macOS..."
-    if ! command -v brew &>/dev/null; then
-        echo "Homebrew not found. Installing..."
-        if [[ "$DRY_RUN" == "false" ]]; then
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
-                log_error "Failed to install Homebrew"
-                exit 1
-            }
-            
-            if [[ "$(uname -m)" == "arm64" ]]; then
-                echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-                eval "$(/opt/homebrew/bin/brew shellenv)"
-            fi
-        fi
-        echo "Homebrew installation completed"
-    else
-        echo "Homebrew found. Updating..."
-        if [[ "$DRY_RUN" == "false" ]]; then
-            brew update || log_error "Failed to update Homebrew"
-            brew upgrade || log_error "Failed to upgrade Homebrew packages"
-        fi
-        echo "Homebrew update completed"
+install_selected_bazzite_tools() {
+    local -a supported=(${(ok)bazzite_brew_tools} ${(ok)bazzite_experimental_tools} ${(ok)bazzite_flatpak_tools} docker)
+    local key
+
+    echo "Starting installation of tools on Bazzite..."
+    announce_selection
+    report_unavailable_selected_tools "bazzite" "${supported[@]}"
+
+    echo "Installing Flatpak applications..."
+    for key in ${(ok)bazzite_flatpak_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing flatpak: $key..."
+        install_flatpak_tool "${bazzite_flatpak_tools[$key]}" "none"
+    done
+
+    echo "Installing Homebrew packages..."
+    for key in ${(ok)bazzite_brew_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing brew: $key..."
+        install_brew_tool "${bazzite_brew_tools[$key]}" false
+    done
+
+    echo "Installing Bazzite experimental tools (opt-in only)..."
+    for key in ${(ok)bazzite_experimental_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing experimental: $key..."
+        case "$key" in
+            kwin-mcp-experimental)
+                install_bazzite_kwin_mcp_experimental
+                ;;
+        esac
+    done
+
+    if should_install_tool "docker"; then
+        echo "Docker equivalent on Bazzite: using the preinstalled Podman stack."
     fi
+
+    echo "Completed installation of Bazzite tools"
+}
+
+install_selected_archlike_tools() {
+    local -a supported=(${(ok)archlike_aur_tools} ${(ok)archlike_brew_tools} ${(ok)archlike_flatpak_tools} ${(ok)archlike_pacman_tools})
+    local key
+
+    echo "Starting installation of tools on Arch-like Linux..."
+    announce_selection
+    report_unavailable_selected_tools "archlike" "${supported[@]}"
+
+    echo "Installing pacman packages..."
+    for key in ${(ok)archlike_pacman_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing pacman: $key..."
+        install_pacman_tool "${archlike_pacman_tools[$key]}"
+    done
+
+    echo "Installing Flatpak applications..."
+    for key in ${(ok)archlike_flatpak_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing flatpak: $key..."
+        install_flatpak_tool "${archlike_flatpak_tools[$key]}" "pacman"
+    done
+
+    echo "Installing AUR packages..."
+    for key in ${(ok)archlike_aur_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing AUR: $key..."
+        install_aur_tool "${archlike_aur_tools[$key]}"
+    done
+
+    echo "Installing Homebrew packages..."
+    for key in ${(ok)archlike_brew_tools}; do
+        should_install_tool "$key" || continue
+        echo "Processing brew: $key..."
+        install_brew_tool "${archlike_brew_tools[$key]}" false
+    done
+
+    echo "Completed installation of Arch-like tools"
 }
 
 setup_conda_macos() {
     echo "Checking conda..."
-    if command -v conda &>/dev/null; then
+    if command -v conda >/dev/null 2>&1; then
         echo "Initializing conda..."
         if [[ "$DRY_RUN" == "false" ]]; then
-            conda init "$(basename "$SHELL")" || log_error "Failed to initialize conda"
+            conda init zsh || log_error "Failed to initialize conda"
         else
             echo "[DRY RUN] Would initialize conda"
         fi
@@ -633,53 +826,109 @@ setup_conda_macos() {
 }
 
 cleanup_macos() {
-    if [[ "$CLEANOSE" == "true" ]]; then
-        echo "Running cleanup..."
-        if [[ "$DRY_RUN" == "false" ]]; then
+    if [[ "$CLEANUP" != "true" ]]; then
+        return 0
+    fi
+
+    echo "Running cleanup..."
+    if [[ "$DRY_RUN" == "false" ]]; then
+        if command -v brew >/dev/null 2>&1; then
             brew cleanup || log_error "Failed to clean up Homebrew cache"
-        else
-            echo "[DRY RUN] Would clean up Homebrew cache"
         fi
+    else
+        echo "[DRY RUN] Would clean up Homebrew cache"
     fi
 }
 
 cleanup_linux() {
-    if [[ "$CLEANOSE" == "true" ]]; then
-        echo "Running cleanup..."
-        if [[ "$DRY_RUN" == "false" ]]; then
-            sudo apt-get autoremove -y || log_error "Failed to clean up apt cache"
-            sudo apt-get autoclean -y || log_error "Failed to clean up apt cache"
-        else
-            echo "[DRY RUN] Would clean up apt cache"
+    if [[ "$CLEANUP" != "true" ]]; then
+        return 0
+    fi
+
+    echo "Running cleanup..."
+    if [[ "$DRY_RUN" == "false" ]]; then
+        if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get autoremove -y || log_error "Failed to run apt autoremove"
+            sudo apt-get autoclean -y || log_error "Failed to run apt autoclean"
         fi
+        if command -v flatpak >/dev/null 2>&1; then
+            flatpak uninstall --unused -y || log_error "Failed to clean up unused Flatpak runtimes"
+        fi
+        if command -v brew >/dev/null 2>&1; then
+            brew cleanup || log_error "Failed to clean up Homebrew cache"
+        fi
+    else
+        echo "[DRY RUN] Would clean up apt, Flatpak, and Homebrew caches"
+    fi
+}
+
+cleanup_bazzite() {
+    if [[ "$CLEANUP" != "true" ]]; then
+        return 0
+    fi
+
+    echo "Running cleanup..."
+    if [[ "$DRY_RUN" == "false" ]]; then
+        if command -v flatpak >/dev/null 2>&1; then
+            flatpak uninstall --unused -y || log_error "Failed to clean up unused Flatpak runtimes"
+        fi
+        if command -v brew >/dev/null 2>&1; then
+            brew cleanup || log_error "Failed to clean up Homebrew cache"
+        fi
+    else
+        echo "[DRY RUN] Would clean up Flatpak and Homebrew caches"
+    fi
+}
+
+cleanup_archlike() {
+    if [[ "$CLEANUP" != "true" ]]; then
+        return 0
+    fi
+
+    echo "Running cleanup..."
+    if [[ "$DRY_RUN" == "false" ]]; then
+        if command -v pacman >/dev/null 2>&1; then
+            sudo pacman -Sc --noconfirm || log_error "Failed to clean up pacman cache"
+        fi
+        if command -v flatpak >/dev/null 2>&1; then
+            flatpak uninstall --unused -y || log_error "Failed to clean up unused Flatpak runtimes"
+        fi
+        if command -v brew >/dev/null 2>&1; then
+            brew cleanup || log_error "Failed to clean up Homebrew cache"
+        fi
+    else
+        echo "[DRY RUN] Would clean up pacman, Flatpak, and Homebrew caches"
     fi
 }
 
 main() {
     echo "Starting installation process..."
-    
+
     parse_args "$@"
     init_logs
     check_system
-    
-    if [[ "$OS_TYPE" == "macos" ]]; then
-        setup_homebrew_macos
-        echo "Installing tools..."
-        install_selected_macos_tools cask_tools true "cask applications"
-        install_selected_macos_tools brew_tools false "brew formulae"
-        setup_conda_macos
-        cleanup_macos
-    elif [[ "$OS_TYPE" == "linux" ]]; then
-        echo "Installing tools..."
-        install_selected_linux_tools
-        cleanup_linux
-    elif [[ "$OS_TYPE" == "bazzite" ]]; then
-        setup_homebrew_bazzite
-        echo "Installing tools..."
-        install_selected_bazzite_tools
-        cleanup_bazzite
-    fi
-    
+
+    echo "Installing tools..."
+    case "$OS_TYPE" in
+        macos)
+            install_selected_macos_tools
+            setup_conda_macos
+            cleanup_macos
+            ;;
+        linux)
+            install_selected_linux_tools
+            cleanup_linux
+            ;;
+        bazzite)
+            install_selected_bazzite_tools
+            cleanup_bazzite
+            ;;
+        archlike)
+            install_selected_archlike_tools
+            cleanup_archlike
+            ;;
+    esac
+
     echo "Installation process completed"
     echo "Check $ERROR_LOG_FILE for any errors"
 }
