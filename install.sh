@@ -674,6 +674,41 @@ kwin-mcp installed (experimental).
 Important on Bazzite/KDE:
   - If you hit session_start segfaults, install/update system deps via rpm-ostree and reboot.
   - Keep wrapper scripts (kwin-mcp-run / kwin-mcp-cleanup) from dotfiles in ~/.local/bin.
+NOTE 
+} 
+ 
+install_islands_dark_theme() { 
+    local ext_dir 
+    case "$OS_TYPE" in 
+        macos|linux|bazzite|archlike) 
+            ext_dir="$HOME/.vscode/extensions/bwya77.islands-dark-0.0.2" 
+            ;; 
+        *) 
+            log_error "Unsupported OS for Islands Dark theme manual install" 
+            return 1 
+            ;; 
+    esac 
+ 
+    if [[ "$DRY_RUN" == "true" ]]; then 
+        echo "[DRY RUN] Would install Islands Dark theme to $ext_dir" 
+        echo "[DRY RUN] Would run: git clone https://github.com/bwya77/vscode-dark-islands $ext_dir" 
+        return 0 
+    fi 
+ 
+    if [[ -d "$ext_dir" ]]; then 
+        echo "Islands Dark theme already installed at $ext_dir. Updating..." 
+        git -C "$ext_dir" pull || log_error "Failed to update Islands Dark theme" 
+    else 
+        echo "Installing Islands Dark theme..." 
+        mkdir -p "$(dirname "$ext_dir")" 
+        git clone https://github.com/bwya77/vscode-dark-islands "$ext_dir" || { 
+            log_error "Failed to clone Islands Dark theme" 
+            return 1 
+        } 
+    fi 
+ 
+    echo "Islands Dark theme installed successfully" 
+}
 NOTE
 }
 
@@ -690,6 +725,9 @@ install_selected_macos_tools() {
         should_install_tool "$key" || continue
         echo "Processing cask: $key..."
         install_brew_tool "${macos_cask_tools[$key]}" true
+        if [[ "$key" == "vscode" ]]; then 
+            install_islands_dark_theme 
+        fi
     done
 
     echo "Installing Homebrew formulae..."
@@ -722,6 +760,9 @@ install_selected_linux_tools() {
         should_install_tool "$key" || continue
         echo "Processing flatpak: $key..."
         install_flatpak_tool "${linux_flatpak_tools[$key]}" "apt"
+        if [[ "$key" == "vscode" ]]; then 
+            install_islands_dark_theme 
+        fi
     done
 
     echo "Installing Homebrew packages..."
@@ -747,6 +788,9 @@ install_selected_bazzite_tools() {
         should_install_tool "$key" || continue
         echo "Processing flatpak: $key..."
         install_flatpak_tool "${bazzite_flatpak_tools[$key]}" "none"
+        if [[ "$key" == "vscode" ]]; then 
+            install_islands_dark_theme 
+        fi
     done
 
     echo "Installing Homebrew packages..."
@@ -787,6 +831,9 @@ install_selected_archlike_tools() {
         should_install_tool "$key" || continue
         echo "Processing pacman: $key..."
         install_pacman_tool "${archlike_pacman_tools[$key]}"
+        if [[ "$key" == "vscode" ]]; then 
+            install_islands_dark_theme 
+        fi
     done
 
     echo "Installing Flatpak applications..."
